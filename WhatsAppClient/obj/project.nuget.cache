@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "9SVTrXEe7ng=",
+  "success": true,
+  "projectFilePath": "/Users/nonamenoname/Documents/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj",
+  "expectedPackageFiles": [
+    "/Users/nonamenoname/.nuget/packages/dotnetseleniumextras.waithelpers/3.11.0/dotnetseleniumextras.waithelpers.3.11.0.nupkg.sha512",
+    "/Users/nonamenoname/.nuget/packages/newtonsoft.json/13.0.1/newtonsoft.json.13.0.1.nupkg.sha512",
+    "/Users/nonamenoname/.nuget/packages/selenium.webdriver/4.21.0/selenium.webdriver.4.21.0.nupkg.sha512"
+  ],
+  "logs": []
+}
