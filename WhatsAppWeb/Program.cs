@@ -6,10 +6,19 @@ using OpenQA.Selenium.Support.UI;
 
 Dictionary<Guid, WhatsAppWeb> WhatsAppWebSessions = new();
 
+SessionLoader();
+
+void SessionLoader()
+{var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+var sessionlist =  Directory.GetDirectories(assemblyDirectory + "/sessionfolder");
+foreach(var session in sessionlist){
+    var dir = new DirectoryInfo(session).Name;
+WhatsAppWebSessions.Add(Guid.Parse(dir),new WhatsAppWeb(Guid.Parse(dir)));
+}
+}
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 app.UseHttpsRedirection();
-
 app.MapGet("/status", ([FromHeader(Name = "X-CUSTOM-HEADER")] Guid customHeader, CancellationToken token) =>
 {
     WhatsAppWebSessions.TryGetValue(customHeader, out WhatsAppWeb session);
@@ -97,7 +106,7 @@ public class WhatsAppWeb
                                 Task.Delay(1000).Wait();
                 canvaselement.SendKeys("You");
                 var you = wait.Until(SeleniumExtras.WaitHelpers.ExpectedConditions.ElementIsVisible(By.CssSelector("div[aria-label='Search results.']")));
-                Task.Delay(1000).Wait();
+                               Task.Delay(2000).Wait();
                 var span = _driver.FindElements(By.CssSelector("span[aria-label='']"));
                 foreach(var element in span){
                     if(element.Text.Contains('+')){
