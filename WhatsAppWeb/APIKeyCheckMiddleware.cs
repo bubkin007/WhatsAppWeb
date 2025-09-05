@@ -2,6 +2,7 @@
 
 internal class APIKeyCheckMiddleware
 {
+    const string CustomHeaderName = "X-CUSTOM-HEADER";
     private readonly RequestDelegate _next;
 
     public APIKeyCheckMiddleware(RequestDelegate next)
@@ -10,10 +11,12 @@ internal class APIKeyCheckMiddleware
     }
 
     public async Task InvokeAsync(HttpContext httpContext)
-    {    
-        if (httpContext.Request.Headers.TryGetValue("X-CUSTOM-HEADER", out StringValues value))
+    {
+        StringValues value;
+        string apikey = string.Empty;
+        if (httpContext.Request.Headers.TryGetValue(CustomHeaderName, out value))
         {
-            var apikey = value;
+            apikey = value;
         }
         else
         {
