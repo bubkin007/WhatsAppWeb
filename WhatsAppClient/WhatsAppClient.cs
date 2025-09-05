@@ -16,6 +16,9 @@ public class WhatsAppClient
     private readonly string _sessionFolder;
     public readonly string MessageUrl = "https://web.whatsapp.com/send/?phone={destination_number}&text={text}&type=phone_number&app_absent=0";
     private bool _qrCodeReady;
+    private const string HeadlessArgument = "--headless";
+    private const string UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+    private string _userDataDirArgument;
 
     public WhatsAppClient()
     {
@@ -36,10 +39,11 @@ public class WhatsAppClient
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
         _sessionFolder = Path.Combine(assemblyDirectory!, "sessionfolder", sessionId.ToString());
         Directory.CreateDirectory(_sessionFolder);
+        _userDataDirArgument = "--user-data-dir=" + _sessionFolder;
         ChromeOptions option = new();
-        option.AddArguments("--headless");
-        option.AddArgument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
-        option.AddArgument("--user-data-dir=" + _sessionFolder);
+        option.AddArgument(HeadlessArgument);
+        option.AddArgument("--user-agent=" + UserAgent);
+        option.AddArgument(_userDataDirArgument);
         _driver = new ChromeDriver(option);
         _driver.Navigate().GoToUrl(_whatsAppUrl);
         new WebDriverWait(_driver, TimeSpan.FromSeconds(60)).Until(d => ((IJavaScriptExecutor)d).ExecuteScript("return document.readyState").Equals("complete"));
