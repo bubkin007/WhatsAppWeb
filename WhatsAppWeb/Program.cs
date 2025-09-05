@@ -1,43 +1,28 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using WhatsAppClient;
 
-
-
-var chrome = false;
-do{
-    Process[] proct = Process.GetProcesses();
-    chrome = false;
-foreach (var procc in proct){
-    if(procc.ProcessName.Contains("Chrome"))
+static void KillChrome()
+{
+    bool found;
+    do
     {
-      procc.Kill();
-      chrome = true;
-    }
+        found = false;
+        foreach (var proc in Process.GetProcesses())
+        {
+            if (proc.ProcessName.Contains("Chrome"))
+            {
+                proc.Kill();
+                found = true;
+            }
+        }
+    } while (found);
 }
-}while(chrome);
+
+KillChrome();
 
 var builder = WebApplication.CreateBuilder(args);
-var WhatsAppWebSessions = new WhatsAppWeb();
-var kek = true;
-do{
-
-    foreach (var session in WhatsAppWebSessions._WhatsAppWebSessions){
-        if(session.Value._logged){
-            kek = false;
-        }
-    }
-}while(kek);
-
-var proc = Process.GetProcesses();
-Process[] s = Process.GetProcessesByName("Chrome");
-foreach (var procc in proc){
-
-    if(procc.ProcessName.Contains("Chrome"))
-    {
-      var memory = procc.PrivateMemorySize64;
-    }
-}
-
+var sessions = new WhatsAppClient.WhatsAppClient();
 
 var app = builder.Build();
 app.UseAPIKeyCheckMiddleware();
@@ -48,34 +33,37 @@ app.Use(async (context, next) =>
     Console.WriteLine($"Request: {context.Request.Method} {context.Request.Path}");
     await next();
 });
-app.MapGet("/status", async handler  =>
+
+app.MapGet("/status", async () =>
 {
-    WhatsAppWebSessions._WhatsAppWebSessions.TryGetValue(Guid.NewGuid(), out WhatsAppWeb session);
-    session.Status();
+    sessions.Sessions.TryGetValue(Guid.NewGuid(), out var session);
+    if (session != null)
+        await session.StatusAsync();
 });
-app.MapGet("/exit", ([FromHeader(Name = "X-CUSTOM-HEADER")] Guid customHeader, CancellationToken token) =>
+
+app.MapGet("/exit", ([FromHeader(Name = "X-CUSTOM-HEADER")] Guid id) =>
 {
-    WhatsAppWebSessions._WhatsAppWebSessions.TryGetValue(customHeader, out WhatsAppWeb session);
-    session.Exit();
-    WhatsAppWebSessions._WhatsAppWebSessions.Remove(customHeader);
-});
-app.MapGet("/GetQrCode", ([FromHeader(Name = "X-CUSTOM-HEADER")] Guid customHeader, CancellationToken token) =>
-{
-    if (customHeader == null)
+    if (sessions.Sessions.TryGetValue(id, out var session))
     {
+        session.Exit();
+        sessions.Sessions.Remove(id);
+    }
+});
+
+app.MapGet("/GetQrCode", async ([FromHeader(Name = "X-CUSTOM-HEADER")] Guid id) =>
+{
+    if (id == Guid.Empty)
         return Results.Unauthorized();
-    }
-    WhatsAppWebSessions._WhatsAppWebSessions.TryGetValue(customHeader, out WhatsAppWeb session);
-    if (session == null)
+    if (!sessions.Sessions.TryGetValue(id, out var session))
     {
-        session = new WhatsAppWeb(customHeader);
-        WhatsAppWebSessions._WhatsAppWebSessions.Add(customHeader, session);
+        session = new WhatsAppClient.WhatsAppClient(id);
+        sessions.Sessions.Add(id, session);
     }
-    if (session._logged == true)
-    {
+    if (session.Logged)
         return Results.BadRequest();
-    }
-    session.Status();
+    await session.StatusAsync();
     return Results.Content(session.GetQrCodeImage, "text/html");
 });
+
 app.Run();
+
