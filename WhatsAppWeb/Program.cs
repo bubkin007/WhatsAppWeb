@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using WhatsAppClient;
 
+const string ChromeProcessName = "Chrome";
 static void KillChrome()
 {
     bool found;
@@ -10,7 +11,7 @@ static void KillChrome()
         found = false;
         foreach (var proc in Process.GetProcesses())
         {
-            if (proc.ProcessName.Contains("Chrome"))
+            if (proc.ProcessName.Contains(ChromeProcessName))
             {
                 proc.Kill();
                 found = true;
