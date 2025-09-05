@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/Users/nonamenoname/Documents/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj": {}
+    "/Users/nonamenoname/selenium/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj": {}
   },
   "projects": {
-    "/Users/nonamenoname/Documents/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj": {
+    "/Users/nonamenoname/selenium/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/nonamenoname/Documents/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj",
+        "projectUniqueName": "/Users/nonamenoname/selenium/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj",
         "projectName": "WhatsAppClient",
-        "projectPath": "/Users/nonamenoname/Documents/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj",
+        "projectPath": "/Users/nonamenoname/selenium/WhatsAppWeb/WhatsAppClient/WhatsAppClient.csproj",
         "packagesPath": "/Users/nonamenoname/.nuget/packages/",
-        "outputPath": "/Users/nonamenoname/Documents/WhatsAppWeb/WhatsAppClient/obj/",
+        "outputPath": "/Users/nonamenoname/selenium/WhatsAppWeb/WhatsAppClient/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/nonamenoname/.nuget/NuGet/NuGet.Config"
@@ -20,6 +20,7 @@
           "net8.0"
         ],
         "sources": {
+          "/usr/local/share/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
@@ -49,7 +50,11 @@
             },
             "Selenium.WebDriver": {
               "target": "Package",
-              "version": "[4.21.0, )"
+              "version": "[4.35.0, )"
+            },
+            "WebDriverManager": {
+              "target": "Package",
+              "version": "[2.17.6, )"
             }
           },
           "imports": [
@@ -68,7 +73,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/8.0.302/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/8.0.407/PortableRuntimeIdentifierGraph.json"
         }
       }
     }
