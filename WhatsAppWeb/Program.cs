@@ -52,6 +52,33 @@ app.MapGet("/kill", async (string guid, long id) =>
     await KillChrome();
     return Results.Ok();
 });
+// IndexedDB
+app.MapGet("/wa/idx/{id:long}/{store}", async (long id, string store, string? cursor, int take) =>
+{
+    using var s = new WhatsAppSession(id);
+    if (!s.CheckIfLoggedIn(10)) return Results.Unauthorized();
+    var batch = await s.ReadIndexedDbBatchAsync("wawc", store, cursor, take <= 0 ? 200 : take);
+    return Results.Json(batch);
+});
+
+// Cache list
+app.MapGet("/wa/cache/{id:long}", async (long id, int take=200) =>
+{
+    using var s = new WhatsAppSession(id);
+    if (!s.CheckIfLoggedIn(10)) return Results.Unauthorized();
+    var list = await s.ListCacheEntriesAsync(take <= 0 ? 200 : take);
+    return Results.Json(list);
+});
+
+// Cache asset
+app.MapGet("/wa/cache/{id:long}/asset", async (long id, string url) =>
+{
+    using var s = new WhatsAppSession(id);
+    if (!s.CheckIfLoggedIn(10)) return Results.Unauthorized();
+    var bytes = await s.GetCachedAssetAsync(url);
+    if (bytes.Length == 0) return Results.NotFound();
+    return Results.File(bytes, "application/octet-stream");
+});
 
 app.Run();
 

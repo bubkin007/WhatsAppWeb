@@ -90,6 +90,7 @@ public sealed class WhatsAppSession : IDisposable
         _ = Task.Run(AuthWaiter);
     }
 
+
     void AuthWaiter()
     {
         var deadline = DateTime.UtcNow.AddMinutes(3);
@@ -118,6 +119,105 @@ public sealed class WhatsAppSession : IDisposable
             return hasApp && noQr;
         };
     }
+    // DTO
+    public record IdxBatch(object[] Items, string? Cursor);
+    public record CacheEntry(string Key, string Url, string Method, int Status, Dictionary<string, string> Headers);
+
+    // WhatsAppSession.cs
+    public async Task<IdxBatch> ReadIndexedDbBatchAsync(string db, string store, string? cursor, int take)
+    {
+        var js = (IJavaScriptExecutor)_driver;
+        var raw = (string)js.ExecuteAsyncScript(@"
+const [dbName, storeName, cursorKey, limit, done] = arguments;
+(async () => {
+  try {
+    const open = indexedDB.open(dbName);
+    await new Promise((res,rej)=>{open.onsuccess=()=>res();open.onerror=()=>rej(open.error);});
+    const db = open.result;
+    const tx = db.transaction(storeName,'readonly');
+    const st = tx.objectStore(storeName);
+    const res = [];
+    let next = null;
+    let req = cursorKey ? st.openCursor(IDBKeyRange.lowerBound(cursorKey,true)) : st.openCursor();
+    await new Promise((res2,rej2)=>{
+      req.onerror = ()=>rej2(req.error);
+      req.onsuccess = e=>{
+        const c = e.target.result;
+        if(!c){res2();return;}
+        res.push(c.value);
+        next = c.key;
+        if(res.length>=limit){res2();return;}
+        c.continue();
+      };
+    });
+    done(JSON.stringify({items:res,cursor:next}));
+  } catch(e){ done(JSON.stringify({items:[],cursor:null,error:String(e)})); }
+})( );
+", "wawc", store, cursor, take);
+        var doc = JsonDocument.Parse(raw);
+        var items = doc.RootElement.GetProperty("items").EnumerateArray().Select(x => JsonSerializer.Deserialize<object>(x.GetRawText())!).ToArray();
+        var next = doc.RootElement.TryGetProperty("cursor", out var c) && c.ValueKind != JsonValueKind.Null ? c.ToString() : null;
+        return new IdxBatch(items, next);
+    }
+
+    public async Task<IReadOnlyList<CacheEntry>> ListCacheEntriesAsync(int take = 200)
+    {
+        var js = (IJavaScriptExecutor)_driver;
+        var raw = (string)js.ExecuteAsyncScript(@"
+const [limit, done] = arguments;
+(async () => {
+  try{
+    const names = await caches.keys();
+    const out = [];
+    for(const n of names){
+      const cache = await caches.open(n);
+      const reqs = await cache.keys();
+      for(const r of reqs){
+        const resp = await cache.match(r);
+        out.push({
+          key: n,
+          url: r.url,
+          method: r.method || 'GET',
+          status: resp ? resp.status : 0,
+          headers: Object.fromEntries(resp ? [...resp.headers.entries()] : [])
+        });
+        if(out.length>=limit) break;
+      }
+      if(out.length>=limit) break;
+    }
+    done(JSON.stringify(out));
+  }catch(e){ done('[]'); }
+})( );
+", take);
+        return JsonSerializer.Deserialize<List<CacheEntry>>(raw) ?? new();
+    }
+
+    public async Task<byte[]> GetCachedAssetAsync(string url)
+    {
+        var js = (IJavaScriptExecutor)_driver;
+        var b64 = (string)js.ExecuteAsyncScript(@"
+const [u, done] = arguments;
+(async () => {
+  try{
+    const names = await caches.keys();
+    for(const n of names){
+      const cache = await caches.open(n);
+      const r = await cache.match(u);
+      if(r){
+        const buf = await r.arrayBuffer();
+        let b=''; const bytes = new Uint8Array(buf);
+        for(let i=0;i<bytes.length;i++) b+=String.fromCharCode(bytes[i]);
+        done(btoa(b));
+        return;
+      }
+    }
+    done('');
+  }catch(e){ done(''); }
+})( );
+", url);
+        return string.IsNullOrEmpty(b64) ? Array.Empty<byte>() : Convert.FromBase64String(b64);
+    }
+
 
     public bool CheckIfLoggedIn(int timeoutSec = 25)
     {
@@ -193,6 +293,11 @@ public sealed class WhatsAppSession : IDisposable
     {
         var meta = new SessionMeta(_id, Key);
         File.WriteAllText(Path.Combine(Dir, MetaFileName), JsonSerializer.Serialize(meta));
+    }
+
+    public async Task<string?> DumpChatHtmlAsync()
+    {
+        throw new NotImplementedException();
     }
 
     record SessionMeta(long Id, Guid Key);
