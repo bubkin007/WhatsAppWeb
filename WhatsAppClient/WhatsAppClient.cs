@@ -1,110 +1,199 @@
-
+// WhatsAppClientLib/WhatsAppSession.cs
 using System.Text;
+using System.Text.Json;
 using Net.Codecrete.QrCodeGenerator;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
-using SeleniumExtras.WaitHelpers;
-using WebDriverManager;
-using WebDriverManager.DriverConfigs.Impl;
-using WebDriverManager.Helpers;
 
-namespace WhatsAppClient;
+namespace WhatsAppClientLib;
 
-public class WhatsAppClient
+public sealed class WhatsAppSession : IDisposable
 {
-    public Dictionary<long, WhatsAppClient> Sessions { get; }
-    private readonly Guid _sessionId;
-    public bool Logged { get; private set; }
-    private readonly IWebDriver _driver;
-    private string _qrCode;
-    private readonly string _whatsAppUrl = "https://web.whatsapp.com/";
-    private readonly string _sessionFolder;
-    public readonly string MessageUrl = "https://web.whatsapp.com/send/?phone={destination_number}&text={text}&type=phone_number&app_absent=0";
-    private bool _qrCodeReady;
-    private const string HeadlessArgument = "--headless";
-    private const string UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-    private string _userDataDirArgument;
-    private string _qrCodeb64;
-    private bool activesession;
-    public WhatsAppClient()
+    public event Action<Guid>? OnLoggedIn;
+
+    const string MetaFileName = "meta.json";
+    static readonly string Root = Path.Combine(AppContext.BaseDirectory, "sessionfolder");
+
+    readonly ChromeDriver _driver;
+    readonly long _id;
+    public Guid Key { get; }
+    public string Dir { get; }
+    public string? QrDataUri { get; private set; }
+    public bool IsLoggedIn { get; private set; }
+
+    public WhatsAppSession()
     {
-        _sessionFolder = Path.Combine(AppContext.BaseDirectory, "sessionfolder");
-        if (!Path.Exists(_sessionFolder)) Directory.CreateDirectory(_sessionFolder);
-        Sessions = [];
-        SessionLoader();
+        Directory.CreateDirectory(Root);
+        _id = NextId();
+        Key = Guid.NewGuid();
+        Dir = Path.Combine(Root, _id.ToString());
+        Directory.CreateDirectory(Dir);
+        PersistMeta();
+        _driver = CreateDriver(Dir);
+        _driver.Navigate().GoToUrl("https://web.whatsapp.com/");
     }
 
-    public WhatsAppClient(Guid sessionId)
+    private WhatsAppSession(long id, Guid key, string dir, bool attachDriver)
     {
-        _sessionFolder = Path.Combine(AppContext.BaseDirectory, "sessionfolder", sessionId.ToString());
-        _userDataDirArgument = "--user-data-dir=" + _sessionFolder;
-        new DriverManager().SetUpDriver(new ChromeConfig(), VersionResolveStrategy.MatchingBrowser);
-        ChromeOptions option = new();
-        //option.AddArgument(HeadlessArgument);
-        option.AddArgument("--user-agent=" + UserAgent);
-        option.AddArgument(_userDataDirArgument);
-        try
+        _id = id;
+        Key = key;
+        Dir = dir;
+        if (attachDriver)
         {
-            _driver = new ChromeDriver(option);
-            _driver.Navigate().GoToUrl(_whatsAppUrl);
-            var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(10));
-            var element = wait.Until(d =>
-            {
-                var el = d.FindElements(By.CssSelector("div[data-ref]")).FirstOrDefault(e => !string.IsNullOrEmpty(e.GetAttribute("data-ref"))); return el;
-            });
-            string payload = element.GetAttribute("data-ref");
-            var qr = QrCode.EncodeText(payload, QrCode.Ecc.Medium);
-            string svg = qr.ToSvgString(border: 4);
-            _qrCodeb64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(svg));
-            string dataUri = $"data:image/svg+xml;base64,{_qrCodeb64}";
+            _driver = CreateDriver(Dir);
+            _driver.Navigate().GoToUrl("https://web.whatsapp.com/");
         }
-        catch { activesession = false; }
     }
 
-    void SessionLoader()
+    public WhatsAppSession(long id)
     {
-        var sessionList = Directory.GetDirectories(_sessionFolder);
-        foreach (var session in sessionList)
+        _id = id;
+        Dir = Path.Combine(Root, id.ToString());
+        if (!Directory.Exists(Dir)) throw new DirectoryNotFoundException("Session dir not found");
+        _driver = CreateDriver(Dir);
+        _driver.Navigate().GoToUrl("https://web.whatsapp.com/");
+    }
+
+    public static WhatsAppSession Open(Guid key)
+    {
+        foreach (var dir in Directory.Exists(Root) ? Directory.GetDirectories(Root) : Array.Empty<string>())
         {
-            var dir = new DirectoryInfo(session).Name;
-            var sessionId = long.Parse(dir);
-            var driver = new WhatsAppClient();
-            if (driver.activesession) Sessions.Add(sessionId, driver);
+            var metaPath = Path.Combine(dir, MetaFileName);
+            if (!File.Exists(metaPath)) continue;
+            try
+            {
+                var meta = JsonSerializer.Deserialize<SessionMeta>(File.ReadAllText(metaPath));
+                if (meta is not null && meta.Key == key)
+                    return new WhatsAppSession(meta.Id, meta.Key, dir, attachDriver: true);
+            }
+            catch { }
+        }
+        throw new DirectoryNotFoundException("Session not found");
+    }
+
+    public WhatsAppSession LoadQr()
+    {
+        if (IsLoggedIn) throw new InvalidOperationException("Already logged in");
+        var el = WaitForQrElement(15);
+        var payload = el.GetAttribute("data-ref");
+        QrDataUri = EncodeQrAsSvgDataUri(payload);
+        _ = Task.Run(AuthWaiter);
+        return this;
+    }
+
+    public void RefreshLoadQr()
+    {
+        var el = WaitForQrElement(15);
+        var payload = el.GetAttribute("data-ref");
+        QrDataUri = EncodeQrAsSvgDataUri(payload);
+        _ = Task.Run(AuthWaiter);
+    }
+
+    void AuthWaiter()
+    {
+        var deadline = DateTime.UtcNow.AddMinutes(3);
+        while (DateTime.UtcNow < deadline && !IsLoggedIn)
+        {
+            try
+            {
+                var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(25));
+                IsLoggedIn = wait.Until(LoggedIn());
+                if (IsLoggedIn)
+                {
+                    OnLoggedIn?.Invoke(Key);
+                    break;
+                }
+            }
+            catch { }
         }
     }
-public   void Init()
+
+    public Func<IWebDriver, bool> LoggedIn()
     {
-       var sessionId = 1;
-        Directory.CreateDirectory(_sessionFolder+sessionId.ToString());
-        _userDataDirArgument = "--user-data-dir=" + _sessionFolder;
-        new DriverManager().SetUpDriver(new ChromeConfig(), VersionResolveStrategy.MatchingBrowser);
-        ChromeOptions option = new();
-        //option.AddArgument(HeadlessArgument);
-        option.AddArgument("--user-agent=" + UserAgent);
-        option.AddArgument(_userDataDirArgument);
+        return d =>
+        {
+            var hasApp = d.FindElements(By.CssSelector("[data-testid='chat-list'],[role='grid']")).Count != 0;
+            var noQr = d.FindElements(By.CssSelector("div[data-ref],canvas[aria-label*='Scan']")).Count == 0;
+            return hasApp && noQr;
+        };
+    }
+
+    public bool CheckIfLoggedIn(int timeoutSec = 25)
+    {
         try
         {
-            var _driverp = new ChromeDriver(option);
-            _driverp.Navigate().GoToUrl(_whatsAppUrl);
-            var wait = new WebDriverWait(_driverp, TimeSpan.FromSeconds(10));
-            var element = wait.Until(d =>
-            {
-                var el = d.FindElements(By.CssSelector("div[data-ref]"))
-                                  .FirstOrDefault(e => !string.IsNullOrEmpty(e.GetAttribute("data-ref"))); return el;
-            });
-            string payload = element.GetAttribute("data-ref");
-            var qr = QrCode.EncodeText(payload, QrCode.Ecc.Medium);
-            string svg = qr.ToSvgString(border: 4);
-            _qrCodeb64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(svg));
-            string dataUri = $"data:image/svg+xml;base64,{_qrCodeb64}";
+            var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(timeoutSec));
+            IsLoggedIn = wait.Until(LoggedIn());
         }
-        catch { }
+        catch { IsLoggedIn = false; }
+        return IsLoggedIn;
     }
-    public void Exit()
+
+    public void Dispose()
     {
-        _driver.Close();
+        try { _driver.Quit(); } catch { }
+        try { _driver.Dispose(); } catch { }
     }
-    public string GetQrCodeImage => $@"<!doctype html><html><head><meta charset=""utf-8""></head><body><a>{_sessionId}</a>  <img width=228px height=228px src=""data:image/+xml;base64,{_qrCodeb64}"" alt=""QR"" /></body></html>";
+
+    static ChromeDriver CreateDriver(string sessionDir)
+    {
+        if (IsProfileLocked(sessionDir)) throw new InvalidOperationException("Profile is locked by another Chrome");
+        var opt = new ChromeOptions();
+        opt.AddArgument("--headless=new");
+        opt.AddArgument("--no-sandbox");
+        opt.AddArgument("--disable-dev-shm-usage");
+        opt.AddArgument("--disable-features=SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure");
+        opt.AddArgument("--window-size=1280,900");
+        opt.AddArgument($"--user-data-dir={sessionDir}");
+        return new ChromeDriver(opt);
+    }
+
+    static bool IsProfileLocked(string dir)
+    {
+        var lf = Path.Combine(dir, "SingletonLock");
+        try
+        {
+            using var _ = File.Open(lf, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (FileNotFoundException) { return false; }
+        catch (IOException) { return true; }
+        catch { return true; }
+    }
+
+    IWebElement WaitForQrElement(int timeoutSec)
+    {
+        var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(timeoutSec));
+        return wait.Until(d =>
+        {
+            var els = d.FindElements(By.CssSelector("div[data-ref]"));
+            return els.FirstOrDefault(x => !string.IsNullOrEmpty(x.GetAttribute("data-ref")));
+        })!;
+    }
+
+    static string EncodeQrAsSvgDataUri(string payload)
+    {
+        var qr = QrCode.EncodeText(payload, QrCode.Ecc.Medium);
+        var svg = qr.ToSvgString(border: 4);
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(svg));
+        return $"data:image/svg+xml;base64,{b64}";
+    }
+
+    long NextId()
+    {
+        var ids = Directory.GetDirectories(Root)
+            .Select(p => new DirectoryInfo(p).Name)
+            .Select(n => long.TryParse(n, out var v) ? v : 0)
+            .Where(v => v > 0);
+        return ids.Any() ? ids.Max() + 1 : 1;
+    }
+
+    void PersistMeta()
+    {
+        var meta = new SessionMeta(_id, Key);
+        File.WriteAllText(Path.Combine(Dir, MetaFileName), JsonSerializer.Serialize(meta));
+    }
+
+    record SessionMeta(long Id, Guid Key);
 }
-

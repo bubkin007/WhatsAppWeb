@@ -1,7 +1,73 @@
 using System.Diagnostics;
-const string ChromeProcessName = "Chrome";
-int sessionid = 0;
-static void KillChrome()
+using WhatsAppClientLib;
+WhatsAppSession? s = null;
+List<int> imutablechrome = [];
+
+var ChromeProcessName = "chrome";
+var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.ConfigureKestrel(k =>
+{
+    k.ListenAnyIP(5080);
+});
+var app = builder.Build();
+Chrome();
+// Хендлер
+app.MapGet("/init/{*tail}", () =>
+{
+    if (s is null)
+    {
+        s = new WhatsAppSession().LoadQr(); // LoadQr должен вернуть this
+        s.OnLoggedIn += key => Console.WriteLine($"Session {key} logged in");
+    }
+    else if (!s.IsLoggedIn && string.IsNullOrEmpty(s.QrDataUri))
+    {
+        s.RefreshLoadQr();
+    }
+
+    var html = s.IsLoggedIn
+        ? $@"<!doctype html><meta charset=""utf-8""><h3>Authorized</h3><p>Guid: {s.Key}</p>"
+        : $@"<!doctype html><meta charset=""utf-8""><h3>Scan QR</h3><p>Guid: {s.Key}</p>
+<img width=228 height=228 src=""{s.QrDataUri}"" alt=""QR"">";
+
+    return Results.Text(html, "text/html");
+});
+
+
+
+app.MapGet("/status/{id}", (long id) =>
+{
+    var status = 0;
+    s ??= new WhatsAppSession(id);
+    status = s.CheckIfLoggedIn() ? 1 : 0;
+    return Results.Ok(status);
+});
+
+app.MapGet("/{string}/{id}", (string guid, long id) =>
+{
+
+    return Results.Ok();
+});
+app.MapGet("/kill", async (string guid, long id) =>
+{
+    await KillChrome();
+    return Results.Ok();
+});
+
+app.Run();
+
+void Chrome()
+{
+    foreach (var proc in Process.GetProcesses())
+    {
+        if (proc.ProcessName.Contains(ChromeProcessName))
+        {
+            imutablechrome.Add(proc.Id);
+                    _ = proc.MainModule;
+        }
+
+    }
+}
+async Task KillChrome()
 {
     bool found;
     do
@@ -9,31 +75,15 @@ static void KillChrome()
         found = false;
         foreach (var proc in Process.GetProcesses())
         {
-            if (proc.ProcessName.Contains(ChromeProcessName))
+            if (!imutablechrome.Contains(proc.Id))
             {
-                proc.Kill();
-                found = true;
+                if (proc.ProcessName.Contains(ChromeProcessName))
+                {
+
+                    proc.Kill();
+                    found = true;
+                }
             }
         }
     } while (found);
 }
-
-var builder = WebApplication.CreateBuilder(args);
-var sessions = new WhatsAppClient.WhatsAppClient();
-var app = builder.Build();
-KillChrome();
-
-app.MapGet("/init", () =>
- {
-     sessions.Init();
-     sessions.Sessions.Add(sessionid, session);
-     sessionid++;
-     return Results.Content(session.GetQrCodeImage, "text/html");
- });
-
-app.MapGet("/checkauth", () =>
- {
-     return Results.Ok();
-});
-app.Run();
-
