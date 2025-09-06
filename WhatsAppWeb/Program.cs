@@ -1,58 +1,54 @@
-using System.Diagnostics;
 using WhatsAppClientLib;
-WhatsAppSession? s = null;
-List<int> imutablechrome = [];
+using WhatsAppWeb;
 
-var ChromeProcessName = "chrome";
+WhatsAppSession? session = null;
+ChromeProcessManager.CaptureInitialProcesses();
+
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.ConfigureKestrel(k =>
 {
     k.ListenAnyIP(5080);
 });
 var app = builder.Build();
-Chrome();
-// Хендлер
+
 app.MapGet("/init/{*tail}", () =>
 {
-    if (s is null)
+    if (session is null)
     {
-        s = new WhatsAppSession().LoadQr(); // LoadQr должен вернуть this
-        s.OnLoggedIn += key => Console.WriteLine($"Session {key} logged in");
+        session = new WhatsAppSession().LoadQr();
+        session.OnLoggedIn += key => Console.WriteLine($"Session {key} logged in");
     }
-    else if (!s.IsLoggedIn && string.IsNullOrEmpty(s.QrDataUri))
+    else if (!session.IsLoggedIn && string.IsNullOrEmpty(session.QrDataUri))
     {
-        s.RefreshLoadQr();
+        session.RefreshLoadQr();
     }
 
-    var html = s.IsLoggedIn
-        ? $@"<!doctype html><meta charset=""utf-8""><h3>Authorized</h3><p>Guid: {s.Key}</p>"
-        : $@"<!doctype html><meta charset=""utf-8""><h3>Scan QR</h3><p>Guid: {s.Key}</p>
-<img width=228 height=228 src=""{s.QrDataUri}"" alt=""QR"">";
+    var html = session.IsLoggedIn
+        ? $@"<!doctype html><meta charset=\"utf-8\"><h3>Authorized</h3><p>Guid: {session.Key}</p>"
+        : $@"<!doctype html><meta charset=\"utf-8\"><h3>Scan QR</h3><p>Guid: {session.Key}</p>" +
+          $@"<img width=228 height=228 src=\"{session.QrDataUri}\" alt=\"QR\">";
 
     return Results.Text(html, "text/html");
 });
 
-
-
 app.MapGet("/status/{id}", (long id) =>
 {
-    var status = 0;
-    s ??= new WhatsAppSession(id);
-    status = s.CheckIfLoggedIn() ? 1 : 0;
+    session ??= new WhatsAppSession(id);
+    var status = session.CheckIfLoggedIn() ? 1 : 0;
     return Results.Ok(status);
 });
 
-app.MapGet("/{string}/{id}", (string guid, long id) =>
+app.MapGet("/{guid}/{id}", (string guid, long id) =>
 {
+    return Results.Ok();
+});
 
-    return Results.Ok();
-});
-app.MapGet("/kill", async (string guid, long id) =>
+app.MapGet("/kill", (string guid, long id) =>
 {
-    await KillChrome();
+    ChromeProcessManager.KillExtraProcesses();
     return Results.Ok();
 });
-// IndexedDB
+
 app.MapGet("/wa/idx/{id:long}/{store}", async (long id, string store, string? cursor, int take) =>
 {
     using var s = new WhatsAppSession(id);
@@ -61,8 +57,7 @@ app.MapGet("/wa/idx/{id:long}/{store}", async (long id, string store, string? cu
     return Results.Json(batch);
 });
 
-// Cache list
-app.MapGet("/wa/cache/{id:long}", async (long id, int take=200) =>
+app.MapGet("/wa/cache/{id:long}", async (long id, int take = 200) =>
 {
     using var s = new WhatsAppSession(id);
     if (!s.CheckIfLoggedIn(10)) return Results.Unauthorized();
@@ -70,7 +65,6 @@ app.MapGet("/wa/cache/{id:long}", async (long id, int take=200) =>
     return Results.Json(list);
 });
 
-// Cache asset
 app.MapGet("/wa/cache/{id:long}/asset", async (long id, string url) =>
 {
     using var s = new WhatsAppSession(id);
@@ -81,36 +75,3 @@ app.MapGet("/wa/cache/{id:long}/asset", async (long id, string url) =>
 });
 
 app.Run();
-
-void Chrome()
-{
-    foreach (var proc in Process.GetProcesses())
-    {
-        if (proc.ProcessName.Contains(ChromeProcessName))
-        {
-            imutablechrome.Add(proc.Id);
-                    _ = proc.MainModule;
-        }
-
-    }
-}
-async Task KillChrome()
-{
-    bool found;
-    do
-    {
-        found = false;
-        foreach (var proc in Process.GetProcesses())
-        {
-            if (!imutablechrome.Contains(proc.Id))
-            {
-                if (proc.ProcessName.Contains(ChromeProcessName))
-                {
-
-                    proc.Kill();
-                    found = true;
-                }
-            }
-        }
-    } while (found);
-}
