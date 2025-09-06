@@ -1,4 +1,6 @@
-using System.Reflection;
+
+using System.Text;
+using Net.Codecrete.QrCodeGenerator;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
@@ -11,7 +13,7 @@ namespace WhatsAppClient;
 
 public class WhatsAppClient
 {
-    public Dictionary<Guid, WhatsAppClient> Sessions { get; }
+    public Dictionary<long, WhatsAppClient> Sessions { get; }
     private readonly Guid _sessionId;
     public bool Logged { get; private set; }
     private readonly IWebDriver _driver;
@@ -23,135 +25,86 @@ public class WhatsAppClient
     private const string HeadlessArgument = "--headless";
     private const string UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
     private string _userDataDirArgument;
-
+    private string _qrCodeb64;
+    private bool activesession;
     public WhatsAppClient()
     {
-        Sessions = new Dictionary<Guid, WhatsAppClient>();
+        _sessionFolder = Path.Combine(AppContext.BaseDirectory, "sessionfolder");
+        if (!Path.Exists(_sessionFolder)) Directory.CreateDirectory(_sessionFolder);
+        Sessions = [];
         SessionLoader();
-    }
-
-    public WhatsAppClient(Guid sessionId, WebDriver driver)
-    {
-        _sessionId = sessionId;
-        _driver = driver;
-        CheckPhone().Wait();
     }
 
     public WhatsAppClient(Guid sessionId)
     {
-        _sessionId = sessionId;
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-        _sessionFolder = Path.Combine(assemblyDirectory!, "sessionfolder", sessionId.ToString());
-        Directory.CreateDirectory(_sessionFolder);
+        _sessionFolder = Path.Combine(AppContext.BaseDirectory, "sessionfolder", sessionId.ToString());
         _userDataDirArgument = "--user-data-dir=" + _sessionFolder;
+        new DriverManager().SetUpDriver(new ChromeConfig(), VersionResolveStrategy.MatchingBrowser);
         ChromeOptions option = new();
-        option.AddArgument(HeadlessArgument);
+        //option.AddArgument(HeadlessArgument);
         option.AddArgument("--user-agent=" + UserAgent);
         option.AddArgument(_userDataDirArgument);
-        _driver = new ChromeDriver(option);
-        _driver.Navigate().GoToUrl(_whatsAppUrl);
-        new WebDriverWait(_driver, TimeSpan.FromSeconds(60)).Until(d => ((IJavaScriptExecutor)d).ExecuteScript("return document.readyState").Equals("complete"));
-        _qrCodeReady = false;
-        CheckQrCodeExistance().Wait();
-        CheckPhone().Wait();
+        try
+        {
+            _driver = new ChromeDriver(option);
+            _driver.Navigate().GoToUrl(_whatsAppUrl);
+            var wait = new WebDriverWait(_driver, TimeSpan.FromSeconds(10));
+            var element = wait.Until(d =>
+            {
+                var el = d.FindElements(By.CssSelector("div[data-ref]")).FirstOrDefault(e => !string.IsNullOrEmpty(e.GetAttribute("data-ref"))); return el;
+            });
+            string payload = element.GetAttribute("data-ref");
+            var qr = QrCode.EncodeText(payload, QrCode.Ecc.Medium);
+            string svg = qr.ToSvgString(border: 4);
+            _qrCodeb64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(svg));
+            string dataUri = $"data:image/svg+xml;base64,{_qrCodeb64}";
+        }
+        catch { activesession = false; }
     }
 
     void SessionLoader()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-        var sessionList = Directory.GetDirectories(Path.Combine(assemblyDirectory!, "sessionfolder"));
+        var sessionList = Directory.GetDirectories(_sessionFolder);
         foreach (var session in sessionList)
         {
             var dir = new DirectoryInfo(session).Name;
-            var sessionId = Guid.Parse(dir);
-            var driver = new WhatsAppClient(sessionId);
-            Sessions.Add(sessionId, driver);
+            var sessionId = long.Parse(dir);
+            var driver = new WhatsAppClient();
+            if (driver.activesession) Sessions.Add(sessionId, driver);
         }
     }
-
-    public async Task StatusAsync()
+public   void Init()
     {
-        await CheckPhone();
-        await CheckQrCodeExistance();
+       var sessionId = 1;
+        Directory.CreateDirectory(_sessionFolder+sessionId.ToString());
+        _userDataDirArgument = "--user-data-dir=" + _sessionFolder;
+        new DriverManager().SetUpDriver(new ChromeConfig(), VersionResolveStrategy.MatchingBrowser);
+        ChromeOptions option = new();
+        //option.AddArgument(HeadlessArgument);
+        option.AddArgument("--user-agent=" + UserAgent);
+        option.AddArgument(_userDataDirArgument);
+        try
+        {
+            var _driverp = new ChromeDriver(option);
+            _driverp.Navigate().GoToUrl(_whatsAppUrl);
+            var wait = new WebDriverWait(_driverp, TimeSpan.FromSeconds(10));
+            var element = wait.Until(d =>
+            {
+                var el = d.FindElements(By.CssSelector("div[data-ref]"))
+                                  .FirstOrDefault(e => !string.IsNullOrEmpty(e.GetAttribute("data-ref"))); return el;
+            });
+            string payload = element.GetAttribute("data-ref");
+            var qr = QrCode.EncodeText(payload, QrCode.Ecc.Medium);
+            string svg = qr.ToSvgString(border: 4);
+            _qrCodeb64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(svg));
+            string dataUri = $"data:image/svg+xml;base64,{_qrCodeb64}";
+        }
+        catch { }
     }
-
     public void Exit()
     {
         _driver.Close();
     }
-
-    private async Task CheckPhone()
-    {
-        do
-        {
-            try
-            {
-                var wait = new WebDriverWait(_driver, new TimeSpan(0, 0, 10));
-                var canvasElement = wait.Until(SeleniumExtras.WaitHelpers.ExpectedConditions.ElementExists(By.ClassName("selectable-text")));
-                Logged = true;
-                canvasElement.Click();
-                await Task.Delay(1000);
-                canvasElement.Clear();
-                await Task.Delay(1000);
-                canvasElement.Click();
-                await Task.Delay(1000);
-                canvasElement.SendKeys("You");
-                wait.Until(SeleniumExtras.WaitHelpers.ExpectedConditions.ElementExists(By.CssSelector("div[aria-label='Search results.']")));
-                await Task.Delay(2000);
-                var span = _driver.FindElements(By.CssSelector("span[aria-label='']"));
-                foreach (var element in span)
-                {
-                    if (element.Text.Contains('+'))
-                    {
-                        Logged = true;
-                        var phone = element.Text;
-                    }
-                }
-            }
-            catch
-            {
-            }
-        } while (!Logged);
-    }
-
-    private async Task RequestQrCode()
-    {
-        if (_qrCode != null)
-        {
-            return;
-        }
-        var wait = new WebDriverWait(_driver, new TimeSpan(0, 0, 10));
-        var canvasElement = wait.Until(SeleniumExtras.WaitHelpers.ExpectedConditions.ElementIsVisible(By.TagName("canvas")));
-        var toDataURLscript = "return arguments[0].toDataURL('image/png');";
-        IJavaScriptExecutor js = (IJavaScriptExecutor)_driver;
-        var freshBase64Image = (string)js.ExecuteScript(toDataURLscript, canvasElement);
-        if (_qrCode != freshBase64Image)
-        {
-            _qrCode = freshBase64Image;
-        }
-    }
-
-    private async Task CheckQrCodeExistance()
-    {
-        do
-        {
-            try
-            {
-                var wait = new WebDriverWait(_driver, new TimeSpan(0, 0, 10));
-                wait.Until(SeleniumExtras.WaitHelpers.ExpectedConditions.ElementExists(By.TagName("canvas")));
-                _qrCodeReady = true;
-                Logged = false;
-                return;
-            }
-            catch
-            {
-                Screenshot ss = ((ITakesScreenshot)_driver).GetScreenshot();
-                var time = DateTime.Now.ToString("hh:mm:ss_dd.MM.yyyy");
-                ss.SaveAsFile(Path.Combine(_sessionFolder, "debug", $"Image{time}.png"));
-            }
-        } while (!_qrCodeReady);
-    }
-
-    public string GetQrCodeImage => $"<!DOCTYPE html><html><body><img src='{_qrCode}'/></body></html>";
+    public string GetQrCodeImage => $@"<!doctype html><html><head><meta charset=""utf-8""></head><body><a>{_sessionId}</a>  <img width=228px height=228px src=""data:image/+xml;base64,{_qrCodeb64}"" alt=""QR"" /></body></html>";
 }
 
